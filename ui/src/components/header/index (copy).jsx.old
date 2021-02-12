@@ -1,0 +1,454 @@
+import React, { useState, useEffect } from "react"
+import { Typography } from '@material-ui/core';
+import { makeStyles } from '@material-ui/core/styles';
+import { Harmony } from '@harmony-js/core'
+import { ChainID,  hexToNumber,
+  numberToHex,
+  fromWei,
+  Units,
+  Unit, } from '@harmony-js/utils'
+import { contractConfig } from './config.js'
+import {hexToAscii} from 'web3-utils';
+import { colors } from "../../theme";
+import {
+  CONNECTION_CONNECTED,
+  CONNECTION_DISCONNECTED,
+  CONFIGURE,
+  CONFIGURE_RETURNED,
+  ERROR,
+  WalletConnectionError
+} from '../../constants'
+import { toBech32 } from '@harmony-js/crypto'
+import UnlockModal from '../unlock/unlockModal.jsx'
+import Balances from './balances.jsx'
+import Store from "../../stores";
+
+const {
+  ChainType
+} = require('@harmony-js/utils');
+
+const { ContractFactory } = require('@harmony-js/contract');
+const store = Store.store
+const emitter = Store.emitter
+const web3 = require('web3');
+const useStyles = makeStyles(theme => ({
+  headerContainer: {
+    position: 'absolute',
+    top: '12px',
+    right: '12px',
+    zIndex: 999,
+    display: 'flex',
+  },
+  actionButton: {
+    background: '#bcecfd',
+    color: '#00AEE9',
+    borderColor: '#00AEE9',
+    '&:hover': {
+      color: `${colors.white} !important`
+    }
+  },
+  gradient: {
+    backgroundColor: colors.white,
+    '&:hover': {
+      backgroundColor: '#00AEE9',
+      '& .title': {
+        color: `${colors.white} !important`
+      },
+      '& .icon': {
+        color: `${colors.white} !important`
+      }
+    },
+    '& .title': {
+      color: '#00AEE9',
+    },
+    '& .icon': {
+      color: '#00AEE9'
+    },
+  },
+  green: {
+    backgroundColor: colors.white,
+    '&:hover': {
+      backgroundColor: colors.compoundGreen,
+      '& .title': {
+        color: colors.white,
+      },
+      '& .icon': {
+        color: colors.white
+      }
+    },
+    '& .title': {
+      color: colors.compoundGreen,
+    },
+    '& .icon': {
+      color: colors.compoundGreen
+    },
+  },
+  account: {
+    alignItems: 'center',
+    justifyContent: 'flex-end',
+    flex: 1,
+    [theme.breakpoints.down('sm')]: {
+      flex: '0'
+    }
+  },
+  walletAddress: {
+    padding: '12px',
+    border: '2px solid rgb(174, 174, 174)',
+    borderRadius: '50px',
+    display: 'flex',
+    alignItems: 'center',
+    cursor: 'pointer',
+    '&:hover': {
+      border: "2px solid "+colors.borderBlue,
+      background: 'rgba(47, 128, 237, 0.1)'
+    },
+    [theme.breakpoints.down('sm')]: {
+      display: 'flex',
+      position: 'absolute',
+      transform: 'translate(0, 200%)',
+      border: "1px solid "+colors.borderBlue,
+      background: colors.white
+    }
+  }
+}));
+
+export default function Header() {
+  const classes = useStyles();
+  const [account, setAccount] = useState(store.getStore('account'))
+  const [modalOpen, setModalOpen] = useState(false)
+
+  useEffect(() => {
+    const connectionChanged = () => {
+      setAccount(store.getStore('account'))
+    }
+
+    emitter.on(CONNECTION_CONNECTED, connectionChanged)
+    emitter.on(CONNECTION_DISCONNECTED, connectionChanged)
+
+    return () => {
+      emitter.removeListener(CONNECTION_CONNECTED, connectionChanged)
+      emitter.removeListener(CONNECTION_DISCONNECTED, connectionChanged)
+    }
+  }, [])
+
+  var address = null;
+  if (account.address) {
+    address = toBech32(account.address)
+    address = `${address.substring(0,6)}...${address.substring(address.length-4,address.length)}`
+  }
+
+  const closeModal = () => {
+    setModalOpen(false)
+  }
+
+  const renderModal = () => {
+    return (
+      <UnlockModal closeModal={ closeModal } modalOpen={ modalOpen } />
+    )
+  }
+
+const hmy = new Harmony(
+  contractConfig.url,
+  {
+    chainType: ChainType.Harmony,
+    chainId: ChainID.HmyTestnet,
+  }
+)
+
+
+const contractFactory = hmy.contracts.createContract(contractConfig.abi, contractConfig.address);
+const contractPriceFeed = hmy.contracts.createContract(contractConfig.abiPriceFeed, contractConfig.addressPriceFeed);
+var contractaddress1 ='.....';
+var oldbalance = 0;
+
+async function ping()
+{
+
+     if ( oldbalance == 0 )
+        {
+            oldbalance = web3.utils.toWei( '25', 'ether' );
+            await getStakes();
+        }
+        else
+        {
+            await updateStakes();
+        }
+      await getBalance();
+   
+}
+
+var rewardPings = [0,0,0,0,0];
+
+async function updateStakes()
+{
+    var ran = Math.floor(Math.random() * 100 ) ;
+    
+    var bal =  await contractPriceFeed.methods.getPrice( oldbalance, ran ).call();
+    oldbalance = bal;
+    var newbalance = web3.utils.fromWei( bal, 'ether' );
+
+    document.getElementById( 'price' ).innerHTML = 'Latest BTC Price ' + ( newbalance * 1200 );
+    
+    for ( var i = 0; i < 5; i++ )
+    {
+        var stakeAddress    = await contractFactory.methods.getContractAddress( i ).call();
+        var stakeInstance   = await hmy.contracts.createContract( contractConfig.abiStake, stakeAddress );
+        var current         = await stakeInstance.methods.isCurrentStake( bal ).call();
+        var myStake         = web3.utils.fromWei( await stakeInstance.methods.getMyBalance(account.address).call() );
+
+        if ( current )
+        {
+            rewardPings[i]++;
+            var rewards =  1000;
+            document.getElementById( 'curent' + i ).innerHTML = '<@# PAYOUT Ping total - ' + rewardPings[i]  + ' - token rewards - ' + ( rewardPings[i] * rewards * myStake ) + ' wei #@>';
+            document.getElementById( 'stake' + i ).style.backgroundColor = "grey";
+        }
+        else
+        {
+            var rewards = 1000;
+            document.getElementById( 'curent' + i ).innerHTML = 'reward payouts so far ' + rewardPings[i] + ' - token rewards - ' + ( rewardPings[i] * rewards * myStake ) + ' wei ' ;
+            document.getElementById( 'stake' + i ).style.backgroundColor = "white";
+        }
+
+    }
+  
+}
+
+async function getStakes()
+{
+
+    var bal =  await contractPriceFeed.methods.getPrice( oldbalance, Math.floor(Math.random() * 100 ) ).call();
+    oldbalance = bal;
+    var newbalance = web3.utils.fromWei( bal, 'ether' );
+
+
+    document.getElementById( 'price' ).innerHTML = 'Latest BTC Price : ' + ( newbalance * 1200 );
+    for ( var i = 0; i < 5; i++ )
+    {
+        var stakeAddress    = await contractFactory.methods.getContractAddress( i ).call();
+        var stakeInstance   = await hmy.contracts.createContract( contractConfig.abiStake, stakeAddress );
+        var stakeName       = hexToAscii( await stakeInstance.methods.getName().call() );
+        var holders         = await stakeInstance.methods.getTotalHolders().call();
+        var current         = await stakeInstance.methods.isCurrentStake( bal ).call();
+        var stakeLow        = await stakeInstance.methods.getlowPrice().call();
+        var stakeHigh       = await stakeInstance.methods.getHighPrice().call();
+        var totalStaked     = await stakeInstance.methods.getMoneyStored().call();
+        var myStake         = await stakeInstance.methods.getMyBalance(account.address).call();
+        var prizePool       = await stakeInstance.methods.getTotalPrizePool().call();
+        document.getElementById( 'stakes' ).innerHTML = document.getElementById( 'stakes' ).innerHTML + '<div id="stake' + i + '" class="stakebox" ><h2>' + stakeName + '<h2><h4>Stakers : ' + holders + '</h4><h4 id="curent' + i + '">Reward pings : ' + rewardPings[i] + '</h4><h4>Total Staked : ' + web3.utils.fromWei( totalStaked ) + ' </h4><h4>Prize Pool : ' + web3.utils.fromWei( prizePool ) + '</h4><h4>My Stake : ' + web3.utils.fromWei( myStake ) + '</h4></div>';
+    }
+  
+}
+
+async function AddToStake1()
+{
+    AddToStake( 0 );
+}
+async function AddToStake2()
+{
+    AddToStake( 1 );
+}
+async function AddToStake3()
+{
+    AddToStake( 2 );
+}
+async function AddToStake4()
+{
+    AddToStake( 3 );
+}
+async function AddToStake5()
+{
+    AddToStake( 4 );
+}
+
+
+
+async function AddToStake( index )
+{
+
+//    var index = 0;
+    var GAS_LIMIT=3321900;
+    var GAS_PRICE=1000000000;
+    
+
+   // const hmy = store.getStore('hmy')
+    const account = store.getStore('account')
+    const context = store.getStore('web3context')
+    //const hmy.contracts = store.getStore('contract' );
+    var connector = null
+
+    if (context) {
+      connector = context.connector
+    }
+
+    if (!connector) {
+      throw new WalletConnectionError('No wallet connected')
+    }
+
+
+
+
+
+    const options = {  gasPrice: GAS_PRICE, gasLimit: GAS_LIMIT, value: 10000000000000000000, // 10 ONEs };
+    };
+  //  alert( 'options ' + options.gasPrice );
+    var stakeAddress = await contractFactory.methods.getContractAddress( index ).call();
+    
+    var stakeInstance   = await hmy.contracts.createContract( contractConfig.abiStake, stakeAddress );
+    var stakeConnected  = await connector.attachToContract( stakeInstance );
+
+//    stakeInstance.wallet.addByPrivateKey('0x0f3c961033989ee57f66bf846687fe01313785284372f8d1f539b12ab206b36d');
+//stakeInstance.wallet.addByPrivateKey('0x7630544ee82e95d2b871168bf9fe1356f0977a19a13961d7bcb99ca369ccb509');
+//    let faucetContract = hmy.client.contracts.createContract(require('../abi/Faucet.json'), config.addresses.faucet)
+//    faucetContract = await connector.attachToContract(faucetContract)
+    
+const addCall = await stakeConnected.methods.addMoney().send( options )
+    .then(
+            
+            
+            response => {console.log('contract deployed at ' + response.transaction.receipt.contractAddress); 
+                            alert( 'adding to stake - tx ' + response.transaction.receipt.contractAddress ); }
+        );
+        document.getElementById( 'stakes' ).innerHTML = '';
+        getStakes();
+        getBalance();
+}
+
+async function RemoveStake1()
+{
+    RemoveStake( 0 );
+}
+async function RemoveStake2()
+{
+    RemoveStake( 1 );
+}
+async function RemoveStake3()
+{
+    RemoveStake( 2 );
+}
+async function RemoveStake4()
+{
+    RemoveStake( 3 );
+}
+async function RemoveStake5()
+{
+    RemoveStake( 4 );
+}
+
+
+async function RemoveStake( index )
+{
+
+//    var index = 0;
+    var GAS_LIMIT=3321900;
+    var GAS_PRICE=1000000000;
+
+    const options = {  gasPrice: GAS_PRICE, gasLimit: GAS_LIMIT };
+    
+
+    var stakeAddress = await contractFactory.methods.getContractAddress( index ).call();
+    var stakeInstance   = await hmy.contracts.createContract( contractConfig.abiStake, stakeAddress );
+
+ //  stakeInstance.wallet.addByPrivateKey('0x0f3c961033989ee57f66bf846687fe01313785284372f8d1f539b12ab206b36d');
+    stakeInstance.wallet.addByPrivateKey('0x7630544ee82e95d2b871168bf9fe1356f0977a19a13961d7bcb99ca369ccb509');
+const addCall = await stakeInstance.methods.removeMoney( rewardPings[index] ).send( options )
+    .then(
+                       
+            response => {console.log('contract deployed at ' + response.transaction.receipt.contractAddress); 
+                            alert( 'withdrawing stake - tx ' + response.transaction.receipt.contractAddress ); }
+        );
+        document.getElementById( 'stakes' ).innerHTML = '';
+        getStakes();
+        getBalance();
+}
+
+var accountBalance = 0;
+async function getBalance()
+{
+       hmy.blockchain
+                  .getBalance({ address: account.address } )
+                  .then( (response) => 
+                   {    
+                        accountBalance = web3.utils.fromWei(hexToNumber(response.result) );
+                        document.getElementById( 'balance' ).innerHTML = 'Balance One Tokens : ' + accountBalance;                  
+                   } )
+}
+
+  return (
+    <div className={ classes.headerContainer }>
+
+      <div className={ classes.account }>
+        { address &&
+          <Typography variant={ 'h2'} className={ `${classes.walletAddress} ${classes.gradient}` } noWrap onClick={ping} >
+            God Button
+          </Typography>
+        }
+
+
+
+        { address &&
+          <Typography variant={ 'h5'} className={ `${classes.walletAddress} ${classes.gradient}` } noWrap onClick={AddToStake1} >
+            Add To 30k - 32k
+          </Typography>
+        }
+         { address &&
+          <Typography variant={ 'h5'} className={ `${classes.walletAddress} ${classes.gradient}` } noWrap onClick={RemoveStake1} >
+            Remove from 30k - 32k
+          </Typography>
+        }
+
+         { address &&
+          <Typography variant={ 'h5'} className={ `${classes.walletAddress} ${classes.gradient}` } noWrap onClick={AddToStake2} >
+            Add To 32k - 34k
+          </Typography>
+        }
+
+        { address &&
+          <Typography variant={ 'h5'} className={ `${classes.walletAddress} ${classes.gradient}` } noWrap onClick={RemoveStake2} >
+            Remove from 32k - 34k
+          </Typography>
+        }
+
+     { address &&
+          <Typography variant={ 'h5'} className={ `${classes.walletAddress} ${classes.gradient}` } noWrap onClick={AddToStake3} >
+            Add To 34k - 36k
+          </Typography>
+        }
+
+        { address &&
+          <Typography variant={ 'h5'} className={ `${classes.walletAddress} ${classes.gradient}` } noWrap onClick={RemoveStake3} >
+            Remove from 34k - 36k
+          </Typography>
+        }
+
+
+        { address &&
+          <Typography variant={ 'h5'} className={ `${classes.walletAddress} ${classes.gradient}` } noWrap onClick={AddToStake4} >
+            Add To 36k - 38k
+          </Typography>
+        }
+
+        { address &&
+          <Typography variant={ 'h5'} className={ `${classes.walletAddress} ${classes.gradient}` } noWrap onClick={RemoveStake4} >
+            Remove from 36 - 38k
+          </Typography>
+        }
+
+       { address &&
+          <Typography variant={ 'h5'} className={ `${classes.walletAddress} ${classes.gradient}` } noWrap onClick={AddToStake5} >
+            Add To 38k - 40k
+          </Typography>
+        }
+
+        { address &&
+          <Typography variant={ 'h5'} className={ `${classes.walletAddress} ${classes.gradient}` } noWrap onClick={RemoveStake5} >
+            Remove from 38 - 40k
+          </Typography>
+        }
+
+      </div>
+
+    </div>
+  );
+
+}
